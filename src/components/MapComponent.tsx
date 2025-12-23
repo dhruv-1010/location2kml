@@ -98,7 +98,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
     return (
         <div className="map-container">
             <MapContainer
-                center={[20, 0]}
+                center={[20, 0] as [number, number]}
                 zoom={2}
                 style={{ height: '100%', width: '100%' }}
                 zoomControl={false}
@@ -111,7 +111,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
                     <GeoJSON
                         key={feature.properties.osm_id || 'default'}
                         data={feature as any}
-                        style={{ color: 'var(--accent-color)', weight: 2, fillOpacity: 0.2 }}
+                        style={() => ({ color: 'var(--accent-color)', weight: 2, fillOpacity: 0.2 })}
                     />
                 )}
 
@@ -122,7 +122,10 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
                         draggable={true}
                         icon={vertexIcon}
                         eventHandlers={{
-                            dragend: (e) => handleDrag(i, e.target.getLatLng())
+                            dragend: (e: L.DragEndEvent) => {
+                                const marker = e.target as L.Marker;
+                                handleDrag(i, marker.getLatLng());
+                            }
                         }}
                     />
                 ))}
