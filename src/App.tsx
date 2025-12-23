@@ -21,7 +21,11 @@ const App: React.FC = () => {
 
     const newFeature: Feature = {
       type: 'Feature',
-      properties: { name: result.display_name, originalGeoJson: result.geojson },
+      properties: {
+        name: result.display_name,
+        originalGeoJson: result.geojson,
+        osm_id: result.osm_id
+      },
       geometry: processedGeoJson
     };
 

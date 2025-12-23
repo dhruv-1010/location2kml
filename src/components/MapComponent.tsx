@@ -107,7 +107,13 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                 />
-                {feature && <GeoJSON data={feature as any} style={{ color: 'var(--accent-color)', weight: 2, fillOpacity: 0.2 }} />}
+                {feature && (
+                    <GeoJSON
+                        key={feature.properties.osm_id || 'default'}
+                        data={feature as any}
+                        style={{ color: 'var(--accent-color)', weight: 2, fillOpacity: 0.2 }}
+                    />
+                )}
 
                 {points.length > 0 && points.length < 500 && points.map((p, i) => (
                     <Marker
