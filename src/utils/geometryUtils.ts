@@ -1,5 +1,5 @@
 import * as turf from '@turf/turf';
-import type { Coordinate } from '../types';
+import type { Coordinate, Feature } from '../types';
 
 /**
  * Converts any GeoJSON geometry to 2D by dropping Z coordinates.
@@ -178,4 +178,162 @@ export const toKML = (geojson: any, name: string = 'Boundary'): string => {
     </Placemark>
   </Document>
 </kml>`;
+};
+
+/**
+ * Parses KML string to GeoJSON Feature(s)
+ */
+export const parseKML = (kmlString: string): Feature[] => {
+  const parser = new DOMParser();
+  const kmlDoc = parser.parseFromString(kmlString, 'text/xml');
+  
+  // Check for parsing errors
+  const parseError = kmlDoc.querySelector('parsererror');
+  if (parseError) {
+    throw new Error('Invalid KML format');
+  }
+
+  const features: Feature[] = [];
+  const namespace = 'http://www.opengis.net/kml/2.2';
+  
+  // Helper to get text content with namespace
+  const getText = (element: Element | null, tagName: string): string => {
+    if (!element) return '';
+    const el = element.getElementsByTagNameNS(namespace, tagName)[0] || 
+               element.getElementsByTagName(tagName)[0];
+    return el?.textContent?.trim() || '';
+  };
+
+  // Helper to parse coordinates string to a single ring
+  const parseCoordinates = (coordString: string): Coordinate[] => {
+    const coords = coordString.trim().split(/\s+/).filter(c => c.trim());
+    const points: Coordinate[] = coords.map(c => {
+      const parts = c.split(',');
+      const lon = parseFloat(parts[0]) || 0;
+      const lat = parseFloat(parts[1]) || 0;
+      return [lon, lat];
+    });
+    
+    // Close the ring if not already closed
+    if (points.length > 0) {
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        points.push([first[0], first[1]]);
+      }
+    }
+    
+    return points;
+  };
+
+  // Process Placemarks
+  const placemarks = kmlDoc.getElementsByTagNameNS(namespace, 'Placemark') || 
+                     kmlDoc.getElementsByTagName('Placemark');
+  
+  for (let i = 0; i < placemarks.length; i++) {
+    const placemark = placemarks[i];
+    const name = getText(placemark, 'name') || `Placemark ${i + 1}`;
+    
+    // Check for Polygon
+    const polygon = placemark.getElementsByTagNameNS(namespace, 'Polygon')[0] ||
+                    placemark.getElementsByTagName('Polygon')[0];
+    
+    if (polygon) {
+      const outerRing = polygon.getElementsByTagNameNS(namespace, 'outerBoundaryIs')[0] ||
+                        polygon.getElementsByTagName('outerBoundaryIs')[0];
+      const innerRings = polygon.getElementsByTagNameNS(namespace, 'innerBoundaryIs') ||
+                         polygon.getElementsByTagName('innerBoundaryIs');
+      
+      const outerCoords = getText(outerRing, 'coordinates');
+      if (outerCoords) {
+        const rings: Coordinate[][] = [parseCoordinates(outerCoords)];
+        
+        // Add inner rings (holes)
+        for (let j = 0; j < innerRings.length; j++) {
+          const innerCoords = getText(innerRings[j], 'coordinates');
+          if (innerCoords) {
+            rings.push(parseCoordinates(innerCoords));
+          }
+        }
+        
+        const feature: Feature = {
+          type: 'Feature',
+          properties: {
+            name,
+            source: 'kml'
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: rings
+          }
+        };
+        features.push(feature);
+      }
+    }
+    
+    // Check for MultiGeometry
+    const multiGeometry = placemark.getElementsByTagNameNS(namespace, 'MultiGeometry')[0] ||
+                          placemark.getElementsByTagName('MultiGeometry')[0];
+    
+    if (multiGeometry) {
+      const polygons = multiGeometry.getElementsByTagNameNS(namespace, 'Polygon') ||
+                       multiGeometry.getElementsByTagName('Polygon');
+      
+      if (polygons.length > 0) {
+        const multiPolyCoords: Coordinate[][][] = [];
+        
+        for (let j = 0; j < polygons.length; j++) {
+          const poly = polygons[j];
+          const outerRing = poly.getElementsByTagNameNS(namespace, 'outerBoundaryIs')[0] ||
+                            poly.getElementsByTagName('outerBoundaryIs')[0];
+          const innerRings = poly.getElementsByTagNameNS(namespace, 'innerBoundaryIs') ||
+                             poly.getElementsByTagName('innerBoundaryIs');
+          
+          const outerCoords = getText(outerRing, 'coordinates');
+          if (outerCoords) {
+            const rings: Coordinate[][] = [parseCoordinates(outerCoords)];
+            
+            // Add inner rings
+            for (let k = 0; k < innerRings.length; k++) {
+              const innerCoords = getText(innerRings[k], 'coordinates');
+              if (innerCoords) {
+                rings.push(parseCoordinates(innerCoords));
+              }
+            }
+            
+            multiPolyCoords.push(rings);
+          }
+        }
+        
+        if (multiPolyCoords.length > 0) {
+          const feature: Feature = {
+            type: 'Feature',
+            properties: {
+              name,
+              source: 'kml'
+            },
+            geometry: {
+              type: 'MultiPolygon',
+              coordinates: multiPolyCoords
+            }
+          };
+          features.push(feature);
+        }
+      }
+    }
+  }
+  
+  // If no Placemarks found, check Document level
+  if (features.length === 0) {
+    const document = kmlDoc.getElementsByTagNameNS(namespace, 'Document')[0] ||
+                     kmlDoc.getElementsByTagName('Document')[0];
+    if (document) {
+      // Recursively parse Document's children
+      const docPlacemarks = document.getElementsByTagNameNS(namespace, 'Placemark') ||
+                            document.getElementsByTagName('Placemark');
+      // This would be handled by the above loop, but if Document wraps them differently...
+    }
+  }
+  
+  return features;
 };

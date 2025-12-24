@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, GeoJSON, useMap, Marker } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import type { Feature } from '../types';
+import type { Feature, Layer } from '../types';
 
 // Fix for default marker icons in Leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -18,23 +18,36 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 interface MapComponentProps {
-    feature: Feature | null;
-    onFeatureChange: (feature: Feature) => void;
+    layers: Layer[];
+    selectedLayerId: string | null;
+    onLayerUpdate: (layerId: string, feature: Feature) => void;
 }
 
-const FitBounds: React.FC<{ feature: Feature | null }> = ({ feature }) => {
+const FitBounds: React.FC<{ layers: Layer[] }> = ({ layers }) => {
     const map = useMap();
     useEffect(() => {
-        if (feature && feature.geometry) {
-            const geojsonLayer = L.geoJSON(feature as any);
-            map.fitBounds(geojsonLayer.getBounds());
+        const visibleLayers = layers.filter(l => l.visible);
+        if (visibleLayers.length > 0) {
+            const bounds = L.latLngBounds([]);
+            visibleLayers.forEach(layer => {
+                if (layer.feature && layer.feature.geometry) {
+                    const geojsonLayer = L.geoJSON(layer.feature as any);
+                    bounds.extend(geojsonLayer.getBounds());
+                }
+            });
+            if (bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [50, 50] });
+            }
         }
-    }, [feature, map]);
+    }, [layers, map]);
     return null;
 };
 
-const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange }) => {
+const MapComponent: React.FC<MapComponentProps> = ({ layers, selectedLayerId, onLayerUpdate }) => {
     const [points, setPoints] = useState<[number, number][]>([]);
+    
+    const selectedLayer = layers.find(l => l.id === selectedLayerId);
+    const feature = selectedLayer?.feature || null;
 
     useEffect(() => {
         if (feature && feature.geometry) {
@@ -57,6 +70,8 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
     }, [feature]);
 
     const handleDrag = (index: number, newLatLng: L.LatLng) => {
+        if (!selectedLayerId || !feature) return;
+
         const newPoints = [...points];
         newPoints[index] = [newLatLng.lat, newLatLng.lng];
 
@@ -65,27 +80,25 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
 
         setPoints(newPoints);
 
-        if (feature) {
-            const geom = feature.geometry;
-            let newCoordinates: any;
+        const geom = feature.geometry;
+        let newCoordinates: any;
 
-            if (geom.type === 'Polygon') {
-                newCoordinates = [newPoints.map(p => [p[1], p[0]])];
-            } else if (geom.type === 'MultiPolygon') {
-                // Update only the first polygon's outer ring
-                newCoordinates = [...geom.coordinates];
-                newCoordinates[0] = [newPoints.map(p => [p[1], p[0]]), ...newCoordinates[0].slice(1)];
-            }
-
-            const updatedFeature: Feature = {
-                ...feature,
-                geometry: {
-                    ...geom,
-                    coordinates: newCoordinates
-                } as any
-            };
-            onFeatureChange(updatedFeature);
+        if (geom.type === 'Polygon') {
+            newCoordinates = [newPoints.map(p => [p[1], p[0]])];
+        } else if (geom.type === 'MultiPolygon') {
+            // Update only the first polygon's outer ring
+            newCoordinates = [...geom.coordinates];
+            newCoordinates[0] = [newPoints.map(p => [p[1], p[0]]), ...newCoordinates[0].slice(1)];
         }
+
+        const updatedFeature: Feature = {
+            ...feature,
+            geometry: {
+                ...geom,
+                coordinates: newCoordinates
+            } as any
+        };
+        onLayerUpdate(selectedLayerId, updatedFeature);
     };
 
     const vertexIcon = L.divIcon({
@@ -107,15 +120,20 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
                     url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                 />
-                {feature && (
+                {layers.filter(l => l.visible).map((layer) => (
                     <GeoJSON
-                        key={feature.properties.osm_id || 'default'}
-                        data={feature as any}
-                        style={() => ({ color: 'var(--accent-color)', weight: 2, fillOpacity: 0.2 })}
+                        key={layer.id}
+                        data={layer.feature as any}
+                        style={() => ({ 
+                            color: layer.color, 
+                            weight: selectedLayerId === layer.id ? 3 : 2, 
+                            fillOpacity: selectedLayerId === layer.id ? 0.3 : 0.15,
+                            opacity: selectedLayerId === layer.id ? 1 : 0.7
+                        })}
                     />
-                )}
+                ))}
 
-                {points.length > 0 && points.length < 500 && points.map((p, i) => (
+                {selectedLayer && selectedLayer.editable && points.length > 0 && points.length < 500 && points.map((p, i) => (
                     <Marker
                         key={`${i}-${p[0]}-${p[1]}`}
                         position={p}
@@ -130,7 +148,7 @@ const MapComponent: React.FC<MapComponentProps> = ({ feature, onFeatureChange })
                     />
                 ))}
 
-                <FitBounds feature={feature} />
+                <FitBounds layers={layers} />
             </MapContainer>
         </div>
     );

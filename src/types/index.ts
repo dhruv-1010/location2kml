@@ -25,3 +25,13 @@ export interface CitySearchResult {
 }
 
 export type EditMode = 'accurate' | 'approximate';
+
+export interface Layer {
+  id: string;
+  name: string;
+  feature: Feature;
+  color: string;
+  visible: boolean;
+  editable: boolean;
+  source: 'search' | 'upload';
+}
