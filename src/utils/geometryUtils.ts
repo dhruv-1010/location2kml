@@ -328,10 +328,8 @@ export const parseKML = (kmlString: string): Feature[] => {
     const document = kmlDoc.getElementsByTagNameNS(namespace, 'Document')[0] ||
                      kmlDoc.getElementsByTagName('Document')[0];
     if (document) {
-      // Recursively parse Document's children
-      const docPlacemarks = document.getElementsByTagNameNS(namespace, 'Placemark') ||
-                            document.getElementsByTagName('Placemark');
-      // This would be handled by the above loop, but if Document wraps them differently...
+      // Document-level Placemarks are already handled by the above loop
+      // since getElementsByTagNameNS searches recursively through the entire document
     }
   }
   

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, GeoJSON, useMap, Marker } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -21,6 +21,8 @@ interface MapComponentProps {
     layers: Layer[];
     selectedLayerId: string | null;
     onLayerUpdate: (layerId: string, feature: Feature) => void;
+    editMode: boolean;
+    onPointsChange?: (points: [number, number][]) => void;
 }
 
 const FitBounds: React.FC<{ layers: Layer[] }> = ({ layers }) => {
@@ -43,70 +45,168 @@ const FitBounds: React.FC<{ layers: Layer[] }> = ({ layers }) => {
     return null;
 };
 
-const MapComponent: React.FC<MapComponentProps> = ({ layers, selectedLayerId, onLayerUpdate }) => {
+// Custom draggable marker component that prevents position updates during drag
+const DraggableMarker: React.FC<{
+    position: [number, number];
+    index: number;
+    icon: L.DivIcon;
+    hoverIcon: L.DivIcon;
+    onDragEnd: (index: number, latLng: L.LatLng) => void;
+}> = ({ position, index, icon, hoverIcon, onDragEnd }) => {
+    const markerRef = useRef<L.Marker | null>(null);
+    const isDraggingRef = useRef(false);
+
+    // Only update position if not dragging
+    useEffect(() => {
+        if (!isDraggingRef.current && markerRef.current) {
+            markerRef.current.setLatLng(position);
+        }
+    }, [position]);
+
+    return (
+        <Marker
+            position={position}
+            draggable={true}
+            icon={icon}
+            zIndexOffset={1000}
+            eventHandlers={{
+                dragstart: () => {
+                    isDraggingRef.current = true;
+                },
+                dragend: (e: L.DragEndEvent) => {
+                    const marker = e.target as L.Marker;
+                    const latLng = marker.getLatLng();
+                    isDraggingRef.current = false;
+                    onDragEnd(index, latLng);
+                },
+                mouseover: (e: L.LeafletMouseEvent) => {
+                    const marker = e.target as L.Marker;
+                    marker.setIcon(hoverIcon);
+                },
+                mouseout: (e: L.LeafletMouseEvent) => {
+                    const marker = e.target as L.Marker;
+                    marker.setIcon(icon);
+                }
+            }}
+            ref={(ref) => {
+                markerRef.current = ref;
+            }}
+        />
+    );
+};
+
+const MapComponent: React.FC<MapComponentProps> = ({ layers, selectedLayerId, editMode, onPointsChange }) => {
     const [points, setPoints] = useState<[number, number][]>([]);
     
     const selectedLayer = layers.find(l => l.id === selectedLayerId);
     const feature = selectedLayer?.feature || null;
 
+    // Extract points from feature - only when feature changes, not onPointsChange
     useEffect(() => {
         if (feature && feature.geometry) {
             const geom = feature.geometry;
             if (geom.type === 'Polygon') {
                 const coords = geom.coordinates[0] as [number, number][];
-                setPoints(coords.map(c => [c[1], c[0]]));
+                if (coords && coords.length > 0) {
+                    const newPoints: [number, number][] = coords.map(c => [c[1], c[0]] as [number, number]);
+                    setPoints(newPoints);
+                    if (onPointsChange) {
+                        onPointsChange(newPoints);
+                    }
+                } else {
+                    setPoints([]);
+                    if (onPointsChange) {
+                        onPointsChange([]);
+                    }
+                }
             } else if (geom.type === 'MultiPolygon') {
-                // For MultiPolygon, we'll only allow editing the first (usually largest) polygon for now
-                // but we show all points if below threshold
                 const firstPoly = geom.coordinates[0];
-                const coords = firstPoly[0] as [number, number][];
-                setPoints(coords.map(c => [c[1], c[0]]));
+                if (firstPoly && firstPoly[0]) {
+                    const coords = firstPoly[0] as [number, number][];
+                    const newPoints: [number, number][] = coords.map(c => [c[1], c[0]] as [number, number]);
+                    setPoints(newPoints);
+                    if (onPointsChange) {
+                        onPointsChange(newPoints);
+                    }
+                } else {
+                    setPoints([]);
+                    if (onPointsChange) {
+                        onPointsChange([]);
+                    }
+                }
             } else {
                 setPoints([]);
+                if (onPointsChange) {
+                    onPointsChange([]);
+                }
             }
         } else {
             setPoints([]);
+            if (onPointsChange) {
+                onPointsChange([]);
+            }
         }
-    }, [feature]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [feature]); // Only depend on feature, not onPointsChange
 
-    const handleDrag = (index: number, newLatLng: L.LatLng) => {
-        if (!selectedLayerId || !feature) return;
+    const handleDragEnd = useCallback((index: number, newLatLng: L.LatLng) => {
+        setPoints(prevPoints => {
+            const newPoints = [...prevPoints];
+            newPoints[index] = [newLatLng.lat, newLatLng.lng];
 
-        const newPoints = [...points];
-        newPoints[index] = [newLatLng.lat, newLatLng.lng];
+            // Keep first and last point in sync for closed polygons
+            if (index === 0 && newPoints.length > 1) {
+                newPoints[newPoints.length - 1] = [newLatLng.lat, newLatLng.lng];
+            }
+            if (index === newPoints.length - 1 && newPoints.length > 1) {
+                newPoints[0] = [newLatLng.lat, newLatLng.lng];
+            }
 
-        if (index === 0) newPoints[newPoints.length - 1] = [newLatLng.lat, newLatLng.lng];
-        if (index === newPoints.length - 1) newPoints[0] = [newLatLng.lat, newLatLng.lng];
+            if (onPointsChange) {
+                onPointsChange(newPoints);
+            }
 
-        setPoints(newPoints);
+            return newPoints;
+        });
+    }, [onPointsChange]);
 
-        const geom = feature.geometry;
-        let newCoordinates: any;
 
-        if (geom.type === 'Polygon') {
-            newCoordinates = [newPoints.map(p => [p[1], p[0]])];
-        } else if (geom.type === 'MultiPolygon') {
-            // Update only the first polygon's outer ring
-            newCoordinates = [...geom.coordinates];
-            newCoordinates[0] = [newPoints.map(p => [p[1], p[0]]), ...newCoordinates[0].slice(1)];
-        }
-
-        const updatedFeature: Feature = {
-            ...feature,
-            geometry: {
-                ...geom,
-                coordinates: newCoordinates
-            } as any
-        };
-        onLayerUpdate(selectedLayerId, updatedFeature);
-    };
-
-    const vertexIcon = L.divIcon({
+    // Memoize icons to prevent recreation
+    const vertexIcon = useMemo(() => L.divIcon({
         className: 'vertex-marker',
-        html: '<div style="background-color: var(--accent-color); width: 8px; height: 8px; border-radius: 50%; border: 2px solid white;"></div>',
-        iconSize: [12, 12],
-        iconAnchor: [6, 6]
-    });
+        html: '<div style="background-color: #58a6ff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 0 0 2px rgba(88,166,255,0.3); cursor: move;"></div>',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11]
+    }), []);
+
+    const vertexIconHover = useMemo(() => L.divIcon({
+        className: 'vertex-marker-hover',
+        html: '<div style="background-color: #7bb3ff; width: 18px; height: 18px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 12px rgba(88,166,255,0.8), 0 0 0 3px rgba(88,166,255,0.5); cursor: move;"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    }), []);
+
+    // Optimize: For polygons with many points, sample them for display
+    const { visiblePoints, indexMap } = useMemo(() => {
+        if (points.length <= 500) {
+            return { 
+                visiblePoints: points, 
+                indexMap: points.map((_, i) => i) 
+            };
+        }
+        // Sample points: show every Nth point to keep performance reasonable
+        const step = Math.ceil(points.length / 500);
+        const visible: [number, number][] = [];
+        const map: number[] = [];
+        
+        for (let i = 0; i < points.length; i++) {
+            if (i === 0 || i === points.length - 1 || i % step === 0) {
+                visible.push(points[i]);
+                map.push(i);
+            }
+        }
+        return { visiblePoints: visible, indexMap: map };
+    }, [points]);
 
     return (
         <div className="map-container">
@@ -133,20 +233,26 @@ const MapComponent: React.FC<MapComponentProps> = ({ layers, selectedLayerId, on
                     />
                 ))}
 
-                {selectedLayer && selectedLayer.editable && points.length > 0 && points.length < 500 && points.map((p, i) => (
-                    <Marker
-                        key={`${i}-${p[0]}-${p[1]}`}
-                        position={p}
-                        draggable={true}
-                        icon={vertexIcon}
-                        eventHandlers={{
-                            dragend: (e: L.DragEndEvent) => {
-                                const marker = e.target as L.Marker;
-                                handleDrag(i, marker.getLatLng());
-                            }
-                        }}
-                    />
-                ))}
+                {selectedLayer && selectedLayer.editable && editMode && visiblePoints.length > 0 && visiblePoints.map((p, visibleIndex) => {
+                    const actualIndex = indexMap[visibleIndex];
+                    
+                    // Skip duplicate last point if it's the same as first
+                    if (actualIndex === points.length - 1 && points.length > 1 && 
+                        Math.abs(p[0] - points[0][0]) < 0.0001 && Math.abs(p[1] - points[0][1]) < 0.0001) {
+                        return null;
+                    }
+                    
+                    return (
+                        <DraggableMarker
+                            key={`edit-${actualIndex}`}
+                            position={p}
+                            index={actualIndex}
+                            icon={vertexIcon}
+                            hoverIcon={vertexIconHover}
+                            onDragEnd={handleDragEnd}
+                        />
+                    );
+                })}
 
                 <FitBounds layers={layers} />
             </MapContainer>

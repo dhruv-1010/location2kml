@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Download, Trash2, MapPin, Upload, Eye, EyeOff, Layers } from 'lucide-react';
+import { Search, Download, Trash2, MapPin, Upload, Eye, EyeOff, Layers, Edit3, RefreshCw } from 'lucide-react';
 import type { CitySearchResult, EditMode, Layer } from '../types';
 
 interface SidebarProps {
@@ -15,6 +15,10 @@ interface SidebarProps {
     onLayerDelete: (layerId: string) => void;
     onLayerToggleVisibility: (layerId: string) => void;
     onClear: () => void;
+    isEditModeActive: boolean;
+    setIsEditModeActive: (active: boolean) => void;
+    onRegeneratePolygon: () => void;
+    canRegenerate: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -29,7 +33,11 @@ const Sidebar: React.FC<SidebarProps> = ({
     onDownloadGeoJson,
     onLayerDelete,
     onLayerToggleVisibility,
-    onClear
+    onClear,
+    isEditModeActive,
+    setIsEditModeActive,
+    onRegeneratePolygon,
+    canRegenerate
 }) => {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<CitySearchResult[]>([]);
@@ -235,6 +243,44 @@ const Sidebar: React.FC<SidebarProps> = ({
                             <MapPin size={16} color="var(--accent-color)" />
                             {selectedLayer.name}
                         </div>
+                    </div>
+                )}
+
+                {selectedLayer && selectedLayer.editable && (
+                    <div style={{ marginBottom: '15px' }}>
+                        <button
+                            className={`btn ${isEditModeActive ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setIsEditModeActive(!isEditModeActive)}
+                            style={{ marginBottom: '10px' }}
+                        >
+                            <Edit3 size={18} /> {isEditModeActive ? 'Exit Edit Mode' : 'Edit Points'}
+                        </button>
+                        {isEditModeActive && (
+                            <div style={{ 
+                                padding: '10px', 
+                                background: 'rgba(88, 166, 255, 0.1)', 
+                                borderRadius: '6px',
+                                marginBottom: '10px',
+                                fontSize: '0.85rem',
+                                color: 'var(--text-secondary)'
+                            }}>
+                                Drag the blue points to move them. Click "Regenerate Polygon" when done.
+                            </div>
+                        )}
+                        {isEditModeActive && (
+                            <button
+                                className="btn btn-primary"
+                                onClick={onRegeneratePolygon}
+                                disabled={!canRegenerate}
+                                style={{ 
+                                    marginBottom: '10px',
+                                    opacity: canRegenerate ? 1 : 0.5,
+                                    cursor: canRegenerate ? 'pointer' : 'not-allowed'
+                                }}
+                            >
+                                <RefreshCw size={18} /> Regenerate Polygon
+                            </button>
+                        )}
                     </div>
                 )}
 

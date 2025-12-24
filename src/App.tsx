@@ -23,6 +23,8 @@ const App: React.FC = () => {
   const [layers, setLayers] = useState<Layer[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState<EditMode>('accurate');
+  const [isEditModeActive, setIsEditModeActive] = useState<boolean>(false);
+  const [editedPoints, setEditedPoints] = useState<[number, number][] | null>(null);
 
   const selectedLayer = layers.find(l => l.id === selectedLayerId);
 
@@ -207,6 +209,90 @@ const App: React.FC = () => {
   const handleClear = () => {
     setLayers([]);
     setSelectedLayerId(null);
+    setIsEditModeActive(false);
+    setEditedPoints(null);
+  };
+
+  const handlePointsChange = (points: [number, number][]) => {
+    setEditedPoints(points);
+  };
+
+  const handleRegeneratePolygon = () => {
+    if (!selectedLayerId) {
+      alert('No layer selected');
+      return;
+    }
+
+    const selectedLayer = layers.find(l => l.id === selectedLayerId);
+    if (!selectedLayer) {
+      alert('Selected layer not found');
+      return;
+    }
+
+    // Use editedPoints if available, otherwise get current points from the layer
+    const pointsToUse = editedPoints || (() => {
+      const geom = selectedLayer.feature.geometry;
+      if (geom.type === 'Polygon') {
+        const coords = geom.coordinates[0] as [number, number][];
+        return coords.map(c => [c[1], c[0]] as [number, number]);
+      } else if (geom.type === 'MultiPolygon') {
+        const firstPoly = geom.coordinates[0];
+        const coords = firstPoly[0] as [number, number][];
+        return coords.map(c => [c[1], c[0]] as [number, number]);
+      }
+      return [] as [number, number][];
+    })();
+
+    if (pointsToUse.length < 3) {
+      alert('Need at least 3 points to create a polygon');
+      return;
+    }
+
+    // Ensure polygon is closed (first and last point are the same)
+    const closedPoints = [...pointsToUse];
+    if (closedPoints.length > 0) {
+      const first = closedPoints[0];
+      const last = closedPoints[closedPoints.length - 1];
+      if (Math.abs(first[0] - last[0]) > 0.0001 || Math.abs(first[1] - last[1]) > 0.0001) {
+        closedPoints.push([first[0], first[1]]);
+      }
+    }
+
+    // Convert points to GeoJSON format (lon, lat)
+    const coordinates: [number, number][] = closedPoints.map(p => [p[1], p[0]] as [number, number]);
+
+    const updatedFeature: Feature = {
+      ...selectedLayer.feature,
+      geometry: {
+        type: 'Polygon',
+        coordinates: [coordinates]
+      }
+    };
+
+    handleLayerUpdate(selectedLayerId, updatedFeature);
+    setIsEditModeActive(false);
+    setEditedPoints(null);
+  };
+
+  const handleEditModeToggle = (active: boolean) => {
+    setIsEditModeActive(active);
+    if (active && selectedLayer) {
+      // Initialize editedPoints with current feature points when entering edit mode
+      const geom = selectedLayer.feature.geometry;
+      if (geom.type === 'Polygon') {
+        const coords = geom.coordinates[0] as [number, number][];
+        const points = coords.map(c => [c[1], c[0]] as [number, number]);
+        setEditedPoints(points);
+      } else if (geom.type === 'MultiPolygon') {
+        const firstPoly = geom.coordinates[0];
+        const coords = firstPoly[0] as [number, number][];
+        const points = coords.map(c => [c[1], c[0]] as [number, number]);
+        setEditedPoints(points);
+      }
+    } else {
+      // Reset edited points when exiting edit mode without regenerating
+      setEditedPoints(null);
+    }
   };
 
   return (
@@ -224,11 +310,17 @@ const App: React.FC = () => {
         onLayerDelete={handleLayerDelete}
         onLayerToggleVisibility={handleLayerToggleVisibility}
         onClear={handleClear}
+        isEditModeActive={isEditModeActive}
+        setIsEditModeActive={handleEditModeToggle}
+        onRegeneratePolygon={handleRegeneratePolygon}
+        canRegenerate={editedPoints !== null && editedPoints.length >= 3}
       />
       <MapComponent 
         layers={layers}
         selectedLayerId={selectedLayerId}
         onLayerUpdate={handleLayerUpdate}
+        editMode={isEditModeActive}
+        onPointsChange={handlePointsChange}
       />
     </>
   );
